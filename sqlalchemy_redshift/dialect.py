@@ -7,7 +7,7 @@ from logging import getLogger
 import pkg_resources
 import sqlalchemy as sa
 from packaging.version import Version
-from sqlalchemy import inspect
+from sqlalchemy import Connection, inspect
 from sqlalchemy.dialects.postgresql import DOMAIN, DOUBLE_PRECISION, ENUM
 from sqlalchemy.dialects.postgresql.base import util
 from sqlalchemy.dialects.postgresql.base import (PGCompiler, PGDDLCompiler,
@@ -33,6 +33,8 @@ from .ddl import (CreateMaterializedView, DropMaterializedView,
                   get_table_attributes)
 from typing import List
 from sqlalchemy.engine.reflection import ReflectionDefaults
+from typing import Optional
+from typing import Any
 
 sa_version = Version(sa.__version__)
 logger = getLogger(__name__)
@@ -949,6 +951,11 @@ class RedshiftDialectMixin(DefaultDialect):
         """
         return self._get_table_or_view_names('v', connection, schema, **kw)
 
+    def get_materialized_view_names(
+        self, connection: Connection, schema: Optional[str] = None, **kw: Any
+    ) -> List[str]:
+        return self._get_table_or_view_names("m", connection, schema, **kw)
+
     @reflection.cache
     def get_view_definition(self, connection, view_name, schema=None, **kw):
         """Return view definition.
@@ -1282,7 +1289,17 @@ class RedshiftDialectMixin(DefaultDialect):
         )
         key = RelationKey(table_name, schema, connection)
         if key not in all_schema_columns.keys():
-            key = key.unquoted()
+            unquoted_key = key.unquoted()
+            # If the key is not found, try again with unquoted key. This can happen if
+            # foreign keys are defined with quoted table names.
+            if unquoted_key != key:
+                return self._get_redshift_columns(
+                    connection,
+                    schema=unquoted_key.schema,
+                    table_name=unquoted_key.name,
+                    info_cache=info_cache
+                )
+
         return all_schema_columns[key]
 
     def _get_redshift_constraints(self, connection, table_name,
